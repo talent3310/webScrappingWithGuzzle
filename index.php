@@ -7,8 +7,10 @@ require "vendor/autoload.php";
 $base_url = "http://agency.governmentjobs.com/kingcounty/";
 $allJobs = array(); //main array, this stores all jobs
 $client = new \GuzzleHttp\Client(); // create guzzle
+ini_set('max_execution_time', 300);
 
 $main_part_url = 'default.cfm?action=jobs&sortBy=&sortByASC=ASC&bHideSearchBox=1&PROMOTIONALJOBS=0&TRANSFER=0&SEARCHAPPLIED=0';//  the main page part url
+
 //--scrape the data from the main page
 try {
 	$res = $client->request('GET', $base_url . $main_part_url , [
@@ -21,15 +23,48 @@ try {
 //--get the html body content
 $response_html = $res->getBody()->getContents();
 
-//--get the links related each page. 
+$doc = new \DOMDocument();
+libxml_use_internal_errors(true);
+$doc->loadHTML($response_html);
+$xpath = new \DOMXPath($doc);
+
+//--get the total page number
+$nodes = $xpath->query("//input[@id = 'pageCount_start_print']");
+$node = $nodes->item(0);
+$total_page_number = $node->getAttribute('value'); // total page number
+
+//--get the first page links related each page. 
 $job_links = extract_links($response_html);
+
+//--get all page links. 
+for($i = 1; $i< $total_page_number; $i++){
+
+	try {
+	$res = $client->request('POST', $base_url . $main_part_url , [
+	    'form_params' => [
+	        'pageCount' => $total_page_number,
+	        'sortBy' => 'CLASSIFICATION',
+	        'sortOrder' => 'ASC',
+	        'pageNumber' => $i+1,
+	            'goToPage' => 'go'
+    	]
+	]);
+	} catch( \GuzzleHttp\Exception\ClientException $e ) {
+	         echo "Error: ".$e->getCode()." ".$e->getMessage();
+	}
+
+	$response_html = $res->getBody()->getContents();
+	$job_links_other =  extract_links($response_html);
+	$job_links = array_merge($job_links,$job_links_other);
+}
+
 
 $number = 0; // array index number of main array
 
 //==============================================================================================
 // get the result array: main array - $allJobs, the child of main array - $data
 //==============================================================================================
-foreach ($job_links as &$value) {
+foreach ($job_links as $value) {
  	$data = array(); // child array of main one
 	$job_links_decode = str_replace('&amp;', '&', $value); // link decode, &amp replace to '&'
 	$detail_page_url = $base_url . $job_links_decode;
@@ -47,8 +82,7 @@ foreach ($job_links as &$value) {
     $each_PageHtml = $each_PageRes->getBody()->getContents();
 
 	$doc = new \DOMDocument();
-    libxml_use_internal_errors(true);
-
+	libxml_use_internal_errors(true);
     $doc->loadHTML($each_PageHtml);
     $xpath = new \DOMXPath($doc);
 
@@ -101,6 +135,7 @@ foreach ($job_links as &$value) {
 	$benefits_PageHtml = $benefits_PageRes->getBody()->getContents(); 
 
 	$doc = new \DOMDocument();
+	libxml_use_internal_errors(true);
     $doc->loadHTML($benefits_PageHtml);
 
     $xpath = new \DOMXPath($doc);
@@ -109,6 +144,8 @@ foreach ($job_links as &$value) {
    	
    	$allJobs[$number] = $data; // insert the child array into parent array  
    	$number ++;	
+  
+   
 }
 
 var_dump($allJobs);// display the scrapped data from the http://agency.governmentjobs.com/kingcounty/
